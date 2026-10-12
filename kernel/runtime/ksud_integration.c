@@ -394,7 +394,7 @@ static void load_module_rc_once(void)
         return;
     }
 
-    old_cred = override_creds(ksu_cred);
+    old_cred = ksu_cred ? override_creds(ksu_cred) : NULL;
 
     f = open_module_rc(&path);
     if (IS_ERR(f)) {
@@ -435,7 +435,8 @@ out_close_file:
     filp_close(f, NULL);
 
 out_revert_creds:
-    revert_creds(old_cred);
+    if (old_cred)
+        revert_creds(old_cred);
 }
 
 static void free_module_rc(void)
@@ -948,9 +949,11 @@ bool ksu_is_safe_mode()
 }
 
 #ifdef CONFIG_KSU_TRACEPOINT_HOOK
-static void ksu_execve_hook_ksud_common(const char __user *filename_user, const char __user *const __user *argv_user)
+void ksu_execve_hook_ksud(const struct pt_regs *regs)
 {
-    struct user_arg_ptr argv = { .ptr.native = argv_user };
+    const char __user **filename_user = (const char **)&PT_REGS_PARM1(regs);
+    const char __user *const __user *__argv = (const char __user *const __user *)PT_REGS_PARM2(regs);
+    struct user_arg_ptr argv = { .ptr.native = __argv };
     char path[32];
     long ret;
     unsigned long addr;
@@ -959,7 +962,7 @@ static void ksu_execve_hook_ksud_common(const char __user *filename_user, const 
     if (!filename_user)
         return;
 
-    addr = untagged_addr((unsigned long)filename_user);
+    addr = untagged_addr((unsigned long)*filename_user);
     fn = (const char __user *)addr;
 
     memset(path, 0, sizeof(path));
@@ -970,22 +973,6 @@ static void ksu_execve_hook_ksud_common(const char __user *filename_user, const 
     }
 
     ksu_handle_execveat_ksud(path, &argv, NULL, NULL);
-}
-
-void ksu_execve_hook_ksud(const struct pt_regs *regs)
-{
-    const char __user *filename_user = (const char __user *)PT_REGS_PARM1(regs);
-    const char __user *const __user *argv_user = (const char __user *const __user *)PT_REGS_PARM2(regs);
-
-    ksu_execve_hook_ksud_common(filename_user, argv_user);
-}
-
-void ksu_execveat_hook_ksud(const struct pt_regs *regs)
-{
-    const char __user *filename_user = (const char __user *)PT_REGS_PARM2(regs);
-    const char __user *const __user *argv_user = (const char __user *const __user *)PT_REGS_PARM3(regs);
-
-    ksu_execve_hook_ksud_common(filename_user, argv_user);
 }
 
 static long (*orig_sys_read)(const struct pt_regs *regs);
